@@ -17,6 +17,7 @@
 #include <X11/keysym.h>
 #include <X11/Xlib.h>
 #include <X11/Xutil.h>
+#include <X11/extensions/dpms.h>
 
 #if HAVE_BSD_AUTH
 #include <login_cap.h>
@@ -30,6 +31,15 @@ typedef struct {
 	unsigned long colors[2];
 } Lock;
 
+typedef struct {
+    CARD16  standby;
+    CARD16  suspend;
+    CARD16  off;
+    BOOL    enabled;
+    BOOL    capable;
+    CARD16  lv;
+} DPMS_Status;
+
 static Lock **locks;
 static int nscreens;
 static Bool running = True;
@@ -42,6 +52,24 @@ die(const char *errstr, ...) {
 	vfprintf(stderr, errstr, ap);
 	va_end(ap);
 	exit(EXIT_FAILURE);
+}
+
+static int DPMS_Get_state(Display * dpy, DPMS_Status * s) {
+    if (!(s->capable = DPMSCapable(dpy))) return 1;
+    DPMSInfo(dpy, &s->lv, &s->enabled);
+    if (!s->enabled) return 1;
+    DPMSGetTimeouts(dpy, &s->standby, &s->suspend, &s->off);
+    return 0;
+}
+
+static void DPMS_off(Display * dpy, CARD16 to) {
+    DPMSSetTimeouts(dpy, 0, 0, to);
+    DPMSForceLevel(dpy, DPMSModeOff);
+}
+
+static void DPMS_Restore(Display * dpy, const DPMS_Status * s) {
+    if ((s->capable && s->enabled))
+        DPMSSetTimeouts(dpy, s->standby, s->suspend, s->off);
 }
 
 #ifndef HAVE_BSD_AUTH
@@ -128,7 +156,7 @@ readpw(Display *dpy, const char *pws)
 					--len;
 				break;
 			default:
-				if(num && !iscntrl((int) buf[0]) && (len + num < sizeof passwd)) { 
+				if(num && !iscntrl((int) buf[0]) && (len + num < sizeof passwd)) {
 					memcpy(passwd + len, buf, num);
 					len += num;
 				}
@@ -219,7 +247,7 @@ lockscreen(Display *dpy, int screen) {
 		unlockscreen(dpy, lock);
 		lock = NULL;
 	}
-	else 
+	else
 		XSelectInput(dpy, lock->root, SubstructureNotifyMask);
 
 	return lock;
@@ -238,6 +266,7 @@ main(int argc, char **argv) {
 #endif
 	Display *dpy;
 	int screen;
+    DPMS_Status dpms_status;
 
 	if((argc == 2) && !strcmp("-v", argv[1]))
 		die("slock-%s, © 2006-2012 Anselm R Garbe\n", VERSION);
@@ -272,6 +301,10 @@ main(int argc, char **argv) {
 		return 1;
 	}
 
+    /* Saving DPMS states and turn off display
+     * if has and enabled DPMS on this display */
+    if (!DPMS_Get_state(dpy, &dpms_status)) DPMS_off(dpy, 5);
+
 	/* Everything is now blank. Now wait for the correct password. */
 #ifdef HAVE_BSD_AUTH
 	readpw(dpy);
@@ -282,6 +315,9 @@ main(int argc, char **argv) {
 	/* Password ok, unlock everything and quit. */
 	for(screen = 0; screen < nscreens; screen++)
 		unlockscreen(dpy, locks[screen]);
+
+    /* restore DPMS state */
+    DPMS_Restore(dpy, &dpms_status);
 
 	free(locks);
 	XCloseDisplay(dpy);

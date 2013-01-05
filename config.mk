@@ -22,7 +22,7 @@ LDFLAGS = -s ${LIBS}
 # On OpenBSD and Darwin remove -lcrypt from LIBS
 
 # compiler and linker
-CC = cc
+CC = gcc
 
 # Install mode. On BSD systems MODE=2755 and GROUP=auth
 # On others MODE=4755 and GROUP=root
